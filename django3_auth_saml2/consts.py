@@ -6,3 +6,4 @@ DEFAULT_SSO_ACS_URL = '/sso/acs/'
 
 LABEL_SSO_ACS = "sso_acs"
 LABEL_SSO_LOGIN = "sso_login"
+LABEL_SSO_LOGOUT = "sso_logout"
