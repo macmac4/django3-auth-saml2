@@ -30,7 +30,8 @@ This package requires the `xmlsec` library to be installed.
 
 This package provides two views:
 
-   * `login` - The URL View should be called when the User attempts to login directly to the app
+   * `login`  - The URL View should be called when the User attempts to login directly to the app
+   * `logout` - The URL View should be called when the User attempts to logout directly to the app
    * `acs` - This URL View should be called by the SSO system (Okta)
   
 When the User attempts to use `login`, the View will redirect the User's web
@@ -51,6 +52,7 @@ that the example below would result in the app API "/sso/acs/" and "/sso/login/"
 urlpatterns = [
     path('sso/', include('django3_auth_saml2.urls')),
     path('login/', RedirectView.as_view(url='/sso/login/')),
+    path('logout/', RedirectView.as_view(url='/sso/logout/')),
 ]
 ```
 
