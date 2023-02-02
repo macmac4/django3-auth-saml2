@@ -26,6 +26,8 @@ from saml2 import (
 
 from saml2.client import Saml2Client
 from saml2.config import Config as Saml2Config
+from saml2.ident import decode
+from saml2.cache import Cache
 
 from django.contrib.auth import login, load_backend
 from django.views.decorators.csrf import csrf_exempt
@@ -107,6 +109,8 @@ def sso_acs(req: WSGIRequest) -> HttpResponseRedirect:
     backend_name = SAML2_AUTH_CONFIG['AUTHENTICATION_BACKEND']
     backend_obj = load_backend(backend_name)
 
+    saml_client.users.add_information_about_person(authn_response.session_info())
+
     # the call to authenticate will call the configure_user method if it
     # exists; the backend is responsible for implementing the necessary
     # configuration options.
@@ -160,11 +164,74 @@ def signin(req: WSGIRequest) -> HttpResponseRedirect:
     return HttpResponseRedirect(redirect_url)
 
 
+def signout(req: WSGIRequest) -> HttpResponseRedirect:
+    """
+    This route is invoked when the User attempts to logout of the application
+    without. As a result of executing this function the User's browswer should 
+    be redirected to the SSO system.
+    """
+
+    # obtain the 'next' parameter from the GET command, and if not provided,
+    # then use the default value as configured in the settings.
+
+    next_url = req.GET.get('next', _default_next_url())
+
+    # Only permit signout requests where the next_url is a safe URL
+    if not url_has_allowed_host_and_scheme(next_url, None):
+        errmsg = f"SAML2: unsafe next URL: {next_url}"
+        _LOG.error(errmsg)
+        raise PermissionDenied(errmsg)
+
+    # Next we need to obtain the SSO system URL to direct the User's browser to
+    # that system so that they can perform the login.  We use the RelayState
+    # URL parameter to pass the 'next-url' value back to the sso handler.
+    saml_client = _get_saml_client(req)
+
+    subject_id = req.session['subject_id']
+    name_id = decode(subject_id)
+
+    result = saml_client.global_logout(name_id)
+
+    from django.contrib import auth
+    auth.logout(req)
+
+    for logout_info in result.values():
+        if isinstance(logout_info, tuple):
+            binding, http_info = logout_info
+            
+            if binding == BINDING_HTTP_POST:
+                _LOG.debug(
+                    "Returning form to the IdP to continue the logout process"
+                )
+                body = "".join(http_info["data"])
+                return HttpResponse(body)
+            elif binding == BINDING_HTTP_REDIRECT:
+                _LOG.debug(
+                    "Redirecting to the IdP to continue the logout process"
+                )
+                redirect_url = get_location(http_info)
+                return HttpResponseRedirect(redirect_url)
+            else:
+                _LOG.error("Unknown binding: %s", binding)
+                return HttpResponseServerError("Failed to log out")
+
+
+
 # -----------------------------------------------------------------------------
 #
 #                          Private Helper Functions
 #
 # -----------------------------------------------------------------------------
+
+
+def get_location(http_info):
+    """Extract the redirect URL from a pysaml2 http_info object"""
+    try:
+        headers = dict(http_info["headers"])
+        return headers["Location"]
+    except KeyError:
+        return http_info["url"]
+
 
 @lru_cache()
 def _default_next_url():
@@ -260,4 +327,11 @@ def _get_saml_client_config(
 def _get_saml_client(req):
     domain = _get_current_domain(req)
     _LOG.debug(f"SAML2 client for domain {domain}")
-    return Saml2Client(config=_get_saml_client_config(domain))
+
+    conf = _get_saml_client_config(domain)
+    cache = Cache(filename='samlsession')
+    client = Saml2Client(
+        conf, state_cache=None, identity_cache=cache
+    )
+    return client
+    # return Saml2Client(config=_get_saml_client_config(domain))
