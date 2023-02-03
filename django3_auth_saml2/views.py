@@ -29,6 +29,7 @@ from saml2.config import Config as Saml2Config
 from saml2.ident import decode
 from saml2.cache import Cache
 
+from django.contrib import auth
 from django.contrib.auth import login, load_backend
 from django.views.decorators.csrf import csrf_exempt
 from django.http import HttpResponseRedirect
@@ -191,30 +192,36 @@ def signout(req: WSGIRequest) -> HttpResponseRedirect:
     name_id = decode(subject_id)
 
     result = saml_client.global_logout(name_id)
-
-    from django.contrib import auth
     auth.logout(req)
 
-    for logout_info in result.values():
-        if isinstance(logout_info, tuple):
-            binding, http_info = logout_info
-            
-            if binding == BINDING_HTTP_POST:
-                _LOG.debug(
-                    "Returning form to the IdP to continue the logout process"
-                )
-                body = "".join(http_info["data"])
-                return HttpResponse(body)
-            elif binding == BINDING_HTTP_REDIRECT:
-                _LOG.debug(
-                    "Redirecting to the IdP to continue the logout process"
-                )
-                redirect_url = get_location(http_info)
-                return HttpResponseRedirect(redirect_url)
-            else:
-                _LOG.error("Unknown binding: %s", binding)
-                return HttpResponseServerError("Failed to log out")
+    # delete name_id from our cache storage, we don't want to keep it in file anymore
+    saml_client.users.cache.delete(name_id)
 
+    try:
+        for logout_info in result.values():
+            if isinstance(logout_info, tuple):
+                binding, http_info = logout_info
+                
+                if binding == BINDING_HTTP_POST:
+                    _LOG.debug(
+                        "Returning form to the IdP to continue the logout process"
+                    )
+                    body = "".join(http_info["data"])
+                    return HttpResponse(body)
+                elif binding == BINDING_HTTP_REDIRECT:
+                    _LOG.debug(
+                        "Redirecting to the IdP to continue the logout process"
+                    )
+                    redirect_url = get_location(http_info)
+                    return HttpResponseRedirect(redirect_url)
+                else:
+                    _LOG.error("Unknown binding: %s", binding)
+                    return HttpResponseServerError("Failed to log out")
+                    
+    except KeyError as exc:
+        missing_attr = exc.args[0]
+        _LOG.error(missing_attr)
+        raise PermissionError(f"SAML2 backend missing attribute: {missing_attr}")
 
 
 # -----------------------------------------------------------------------------

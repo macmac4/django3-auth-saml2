@@ -10,4 +10,3 @@ urlpatterns = [
     path('login/', views.signin, name=consts.LABEL_SSO_LOGIN),
     path('logout/', views.signout, name=consts.LABEL_SSO_LOGOUT)
 ]
-
